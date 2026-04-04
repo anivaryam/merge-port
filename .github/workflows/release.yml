@@ -20,7 +20,7 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Build binaries
+      - name: Build and package binaries
         run: |
           VERSION=${GITHUB_REF_NAME}
           LDFLAGS="-s -w -X main.version=${VERSION}"
@@ -38,12 +38,22 @@ jobs:
           for platform in "${platforms[@]}"; do
             GOOS="${platform%/*}"
             GOARCH="${platform#*/}"
-            output="merge-port-${GOOS}-${GOARCH}"
+            bin="merge-port"
             if [ "$GOOS" = "windows" ]; then
-              output="${output}.exe"
+              bin="merge-port.exe"
             fi
-            echo "Building ${output}..."
-            GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "dist/${output}" ./cmd/mergeport
+
+            echo "Building ${GOOS}/${GOARCH}..."
+            TMP="$(mktemp -d)"
+            GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "${TMP}/${bin}" ./cmd/mergeport
+
+            archive="merge-port_${GOOS}_${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then
+              (cd "$TMP" && zip -q "${OLDPWD}/dist/${archive}.zip" "$bin")
+            else
+              tar -czf "dist/${archive}.tar.gz" -C "$TMP" "$bin"
+            fi
+            rm -rf "$TMP"
           done
 
       - name: Create release

@@ -4,7 +4,19 @@ A local reverse proxy that merges your client and server into a single port. Run
 
 ## Install
 
-Download the latest binary from [Releases](https://github.com/anivaryam/merge-port/releases), or build from source:
+**Quick install** (Linux/macOS):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/anivaryam/merge-port/main/install.sh | sh
+```
+
+**Go install**:
+
+```bash
+go install github.com/anivaryam/merge-port/cmd/mergeport@latest
+```
+
+**Build from source**:
 
 ```bash
 make build
