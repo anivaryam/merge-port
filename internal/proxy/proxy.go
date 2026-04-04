@@ -78,6 +78,10 @@ func (p *Proxy) handler() http.HandlerFunc {
 		rp.Director = func(req *http.Request) {
 			originalDirector(req)
 			req.Host = target.Host
+			// Remove Origin/Referer so upstreams don't see cross-origin
+			// requests — the proxy is the single origin, like nginx.
+			req.Header.Del("Origin")
+			req.Header.Del("Referer")
 		}
 
 		rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
