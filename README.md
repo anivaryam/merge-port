@@ -68,6 +68,27 @@ Route mode cannot be combined with `--client`, `--server`, or `--api-prefix`.
 | `--port` | `8080` | Port to listen on |
 | `--api-prefix` | `/api` | Path prefix routed to server (repeatable) |
 | `--route` | | Explicit route as `prefix=target` (repeatable, route mode) |
+| `--silent` | | Suppress all proxy log output |
+| `--log-file` | | Write proxy logs to a file instead of stdout |
+| `--detach` | | Run in the background (implies `--silent`); logs go to the file set by `--log-file` |
+
+### discover subcommand
+
+Detect the API prefixes exposed by a running server by probing common OpenAPI/Swagger endpoints:
+
+```bash
+merge-port discover --server 3001
+```
+
+Output:
+
+```
+Detected API prefixes:
+  /api
+  /health
+```
+
+Use the detected prefixes with `--api-prefix` to configure routing.
 
 ### Examples
 
