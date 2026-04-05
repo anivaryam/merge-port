@@ -24,17 +24,22 @@ type Route struct {
 type Proxy struct {
 	Port   int
 	Routes []Route
+	Logger *Logger
 }
 
 // NewProxy creates a new Proxy. Routes are sorted by prefix length (longest first)
 // so that more specific paths match before less specific ones.
-func NewProxy(port int, routes []Route) *Proxy {
+// If logger is nil a default stdout logger is used.
+func NewProxy(port int, routes []Route, logger *Logger) *Proxy {
 	sorted := make([]Route, len(routes))
 	copy(sorted, routes)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Prefix) > len(sorted[j].Prefix)
 	})
-	return &Proxy{Port: port, Routes: sorted}
+	if logger == nil {
+		logger, _ = NewLogger(false, "")
+	}
+	return &Proxy{Port: port, Routes: sorted, Logger: logger}
 }
 
 // Run starts the proxy server and blocks until the context is cancelled.
@@ -78,16 +83,16 @@ func (p *Proxy) handler() http.HandlerFunc {
 		rp.Director = func(req *http.Request) {
 			originalDirector(req)
 			req.Host = target.Host
-			// Remove Origin/Referer so upstreams don't see cross-origin
-			// requests — the proxy is the single origin, like nginx.
 			req.Header.Del("Origin")
 			req.Header.Del("Referer")
 		}
 
+		logger := p.Logger
+		routeTarget := r.Target
 		rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
-			PrintError(req.Method, req.URL.Path, r.Target, err)
+			logger.Error(req.Method, req.URL.Path, routeTarget, err)
 			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, "merge-port: upstream %s unreachable: %v", r.Target, err)
+			fmt.Fprintf(w, "merge-port: upstream %s unreachable: %v", routeTarget, err)
 		}
 
 		reverseProxies[r.Prefix] = rp
@@ -100,14 +105,14 @@ func (p *Proxy) handler() http.HandlerFunc {
 				start := time.Now()
 
 				if isWebSocket(r) {
-					PrintWebSocket(r.URL.Path, route.Target)
+					p.Logger.WebSocket(r.URL.Path, route.Target)
 					rp.ServeHTTP(w, r)
 					return
 				}
 
 				rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 				rp.ServeHTTP(rec, r)
-				PrintRequest(r.Method, r.URL.Path, rec.status, route.Target, time.Since(start))
+				p.Logger.Request(r.Method, r.URL.Path, rec.status, route.Target, time.Since(start))
 				return
 			}
 		}

@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"fmt"
-	"time"
 )
 
 const (
@@ -16,6 +15,7 @@ const (
 )
 
 // PrintBanner prints the startup banner with routing info.
+// Always writes to stdout regardless of Logger settings.
 func PrintBanner(port int, routes []Route) {
 	fmt.Println()
 	fmt.Printf("%s%smerge-port%s %sis running%s on port %s%d%s\n",
@@ -31,34 +31,6 @@ func PrintBanner(port int, routes []Route) {
 	fmt.Println()
 	fmt.Printf("  %sPress Ctrl+C to stop%s\n", colorDim, colorReset)
 	fmt.Println()
-}
-
-// PrintRequest logs a proxied request with color-coded status.
-func PrintRequest(method, path string, status int, target string, elapsed time.Duration) {
-	color := statusColor(status)
-	fmt.Printf("  %s%-7s%s %s → %s%s%s %s%d%s %s%s%s\n",
-		colorBold, method, colorReset,
-		path,
-		colorDim, target, colorReset,
-		color, status, colorReset,
-		colorDim, elapsed.Round(time.Millisecond), colorReset)
-}
-
-// PrintWebSocket logs a WebSocket upgrade.
-func PrintWebSocket(path, target string) {
-	fmt.Printf("  %s↑ WS%s    %s → %s%s%s\n",
-		colorYellow, colorReset,
-		path,
-		colorDim, target, colorReset)
-}
-
-// PrintError logs a proxy error.
-func PrintError(method, path, target string, err error) {
-	fmt.Printf("  %s%-7s%s %s → %s%s%s %s%v%s\n",
-		colorBold, method, colorReset,
-		path,
-		colorDim, target, colorReset,
-		colorRed, err, colorReset)
 }
 
 func statusColor(code int) string {

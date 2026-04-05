@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sort"
 	"strings"
@@ -25,6 +26,9 @@ func main() {
 		listenPort  int
 		apiPrefixes []string
 		rawRoutes   []string
+		silent      bool
+		logFile     string
+		detach      bool
 	)
 
 	rootCmd := &cobra.Command{
@@ -44,21 +48,39 @@ Route mode (full control):
 		Example: `  # Default: /api → server, everything else → client
   merge-port --client 3000 --server 3001
 
-  # Multiple prefixes to the same server
-  merge-port --client 3000 --server 3001 --api-prefix /api --api-prefix /auth --api-prefix /ws
+  # Suppress request logs
+  merge-port --client 5173 --server 3000 --silent
 
-  # Custom listen port
-  merge-port --client 5173 --server 3001 --port 9000
+  # Write request logs to file
+  merge-port --client 5173 --server 3000 --log-file /tmp/mp.log
 
-  # Full custom routing (different backends)
-  merge-port --route /api=3001 --route /auth=3002 --route /=3000`,
+  # Detach from terminal (daemonize)
+  merge-port --client 5173 --server 3000 --detach`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			routes, err := buildRoutes(clientPort, serverPort, apiPrefixes, rawRoutes)
 			if err != nil {
 				return err
 			}
 
-			p := proxy.NewProxy(listenPort, routes)
+			if detach {
+				effectiveLog := logFile
+				if effectiveLog == "" {
+					effectiveLog = fmt.Sprintf("%s/merge-port-%d.log", os.TempDir(), listenPort)
+				}
+				if err := detachProcess(os.Args[1:], effectiveLog); err != nil {
+					return err
+				}
+				fmt.Printf("merge-port detached, logging to %s\n", effectiveLog)
+				return nil
+			}
+
+			logger, err := proxy.NewLogger(silent, logFile)
+			if err != nil {
+				return err
+			}
+			defer logger.Close()
+
+			p := proxy.NewProxy(listenPort, routes, logger)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -79,8 +101,11 @@ Route mode (full control):
 	rootCmd.Flags().IntVar(&listenPort, "port", 8080, "port to listen on")
 	rootCmd.Flags().StringArrayVar(&apiPrefixes, "api-prefix", nil, "path prefix routed to server (repeatable, default: /api)")
 	rootCmd.Flags().StringArrayVar(&rawRoutes, "route", nil, "explicit route as prefix=target (repeatable, e.g. /api=3001)")
+	rootCmd.Flags().BoolVar(&silent, "silent", false, "suppress request log output")
+	rootCmd.Flags().StringVar(&logFile, "log-file", "", "write request logs to FILE instead of stdout")
+	rootCmd.Flags().BoolVar(&detach, "detach", false, "daemonize: detach from terminal and run in background")
 
-	// discover subcommand: query a running server's OpenAPI spec to print prefixes.
+	// discover subcommand
 	var discoverPort int
 	discoverCmd := &cobra.Command{
 		Use:   "discover",
@@ -122,11 +147,68 @@ detected route prefixes as merge-port flags and a proc-compose.yaml snippet.`,
 	}
 }
 
-// discoverPrefixes queries common OpenAPI endpoints on base and returns the
-// top-level path prefixes found, plus which endpoint succeeded.
+// detachProcess re-execs the binary without --detach, redirecting output to logPath.
+func detachProcess(osArgs []string, logPath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	args := stripFlags(osArgs, []string{"--detach"}, []string{})
+
+	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("cannot open log file %s: %w", logPath, err)
+	}
+
+	cmd := exec.Command(exe, args...)
+	cmd.Stdin = nil
+	cmd.Stdout = lf
+	cmd.Stderr = lf
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := cmd.Start(); err != nil {
+		lf.Close()
+		return fmt.Errorf("failed to start background process: %w", err)
+	}
+	cmd.Process.Release()
+	lf.Close()
+	return nil
+}
+
+// stripFlags removes boolean flags and value flags from args.
+func stripFlags(args, boolFlags, valueFlags []string) []string {
+	boolSet := make(map[string]bool)
+	for _, f := range boolFlags {
+		boolSet[f] = true
+	}
+	valSet := make(map[string]bool)
+	for _, f := range valueFlags {
+		valSet[f] = true
+	}
+
+	var out []string
+	skip := false
+	for _, a := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if boolSet[a] {
+			continue
+		}
+		if valSet[a] {
+			skip = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// ─── discover helpers ─────────────────────────────────────────────────────────
+
 func discoverPrefixes(base string) ([]string, string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-
 	endpoints := []string{
 		"/openapi.json",
 		"/swagger.json",
@@ -135,35 +217,31 @@ func discoverPrefixes(base string) ([]string, string, error) {
 		"/api/openapi.json",
 		"/api-docs",
 	}
-
 	for _, ep := range endpoints {
 		prefixes, ok := tryOpenAPI(client, base+ep)
 		if ok {
 			return prefixes, ep, nil
 		}
 	}
-
 	return nil, "", fmt.Errorf("server at %s did not return an OpenAPI spec — is it running?\nTried: %s",
 		base, strings.Join(endpoints, ", "))
 }
 
 func tryOpenAPI(client *http.Client, rawURL string) ([]string, bool) {
 	resp, err := client.Get(rawURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			resp.Body.Close()
-		}
+	if err != nil {
 		return nil, false
 	}
 	defer resp.Body.Close()
-
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
 	var spec struct {
 		Paths map[string]interface{} `json:"paths"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil || len(spec.Paths) == 0 {
 		return nil, false
 	}
-
 	seen := make(map[string]bool)
 	for path := range spec.Paths {
 		prefix := topPrefix(path)
@@ -174,7 +252,6 @@ func tryOpenAPI(client *http.Client, rawURL string) ([]string, bool) {
 	if len(seen) == 0 {
 		return nil, false
 	}
-
 	prefixes := make([]string, 0, len(seen))
 	for p := range seen {
 		prefixes = append(prefixes, p)
@@ -183,7 +260,6 @@ func tryOpenAPI(client *http.Client, rawURL string) ([]string, bool) {
 	return prefixes, true
 }
 
-// topPrefix extracts the first path segment: "/api/users" → "/api".
 func topPrefix(path string) string {
 	trimmed := strings.TrimPrefix(path, "/")
 	parts := strings.SplitN(trimmed, "/", 2)
@@ -192,6 +268,8 @@ func topPrefix(path string) string {
 	}
 	return "/" + parts[0]
 }
+
+// ─── route building ───────────────────────────────────────────────────────────
 
 func buildRoutes(clientPort, serverPort int, apiPrefixes, rawRoutes []string) ([]proxy.Route, error) {
 	routeMode := len(rawRoutes) > 0
@@ -205,7 +283,6 @@ func buildRoutes(clientPort, serverPort int, apiPrefixes, rawRoutes []string) ([
 		return parseRouteFlags(rawRoutes)
 	}
 
-	// Simple mode
 	if clientPort == 0 {
 		return nil, fmt.Errorf("--client port is required")
 	}
@@ -231,7 +308,6 @@ func buildRoutes(clientPort, serverPort int, apiPrefixes, rawRoutes []string) ([
 		routes = append(routes, proxy.Route{Prefix: p, Target: serverTarget})
 	}
 	routes = append(routes, proxy.Route{Prefix: "/", Target: clientTarget})
-
 	return routes, nil
 }
 
@@ -244,14 +320,12 @@ func parseRouteFlags(rawRoutes []string) ([]proxy.Route, error) {
 		}
 		prefix := raw[:idx]
 		target := raw[idx+1:]
-
 		if prefix == "" || !strings.HasPrefix(prefix, "/") {
 			return nil, fmt.Errorf("route prefix must start with /: %q", prefix)
 		}
 		if target == "" {
 			return nil, fmt.Errorf("route target is empty for prefix %q", prefix)
 		}
-
 		target = normalizeTarget(target)
 		routes = append(routes, proxy.Route{Prefix: prefix, Target: target})
 	}
