@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/anivaryam/merge-port/internal/proxy"
 	"github.com/spf13/cobra"
@@ -76,9 +80,117 @@ Route mode (full control):
 	rootCmd.Flags().StringArrayVar(&apiPrefixes, "api-prefix", nil, "path prefix routed to server (repeatable, default: /api)")
 	rootCmd.Flags().StringArrayVar(&rawRoutes, "route", nil, "explicit route as prefix=target (repeatable, e.g. /api=3001)")
 
+	// discover subcommand: query a running server's OpenAPI spec to print prefixes.
+	var discoverPort int
+	discoverCmd := &cobra.Command{
+		Use:   "discover",
+		Short: "Detect API route prefixes from a running server",
+		Long: `Queries a running server for its OpenAPI spec and prints the
+detected route prefixes as merge-port flags and a proc-compose.yaml snippet.`,
+		Example: `  merge-port discover --server 3000
+  merge-port discover --server 5000`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			base := fmt.Sprintf("http://localhost:%d", discoverPort)
+			prefixes, source, err := discoverPrefixes(base)
+			if err != nil {
+				return err
+			}
+			if len(prefixes) == 0 {
+				fmt.Printf("No API prefixes found at %s.\nSpecify them manually with --api-prefix.\n", base)
+				return nil
+			}
+
+			fmt.Printf("\nDetected from %s (%s):\n\n", base, source)
+			for _, p := range prefixes {
+				fmt.Printf("  --api-prefix %s\n", p)
+			}
+			fmt.Printf("\nproc-compose.yaml:\n\n  api_prefixes:\n")
+			for _, p := range prefixes {
+				fmt.Printf("    - %s\n", p)
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+	discoverCmd.Flags().IntVar(&discoverPort, "server", 0, "server port to query")
+	discoverCmd.MarkFlagRequired("server")
+
+	rootCmd.AddCommand(discoverCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// discoverPrefixes queries common OpenAPI endpoints on base and returns the
+// top-level path prefixes found, plus which endpoint succeeded.
+func discoverPrefixes(base string) ([]string, string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	endpoints := []string{
+		"/openapi.json",
+		"/swagger.json",
+		"/api-docs/swagger.json",
+		"/api/docs/swagger.json",
+		"/api/openapi.json",
+		"/api-docs",
+	}
+
+	for _, ep := range endpoints {
+		prefixes, ok := tryOpenAPI(client, base+ep)
+		if ok {
+			return prefixes, ep, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("server at %s did not return an OpenAPI spec — is it running?\nTried: %s",
+		base, strings.Join(endpoints, ", "))
+}
+
+func tryOpenAPI(client *http.Client, rawURL string) ([]string, bool) {
+	resp, err := client.Get(rawURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, false
+	}
+	defer resp.Body.Close()
+
+	var spec struct {
+		Paths map[string]interface{} `json:"paths"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&spec); err != nil || len(spec.Paths) == 0 {
+		return nil, false
+	}
+
+	seen := make(map[string]bool)
+	for path := range spec.Paths {
+		prefix := topPrefix(path)
+		if prefix != "/" && strings.HasPrefix(prefix, "/") {
+			seen[prefix] = true
+		}
+	}
+	if len(seen) == 0 {
+		return nil, false
+	}
+
+	prefixes := make([]string, 0, len(seen))
+	for p := range seen {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+	return prefixes, true
+}
+
+// topPrefix extracts the first path segment: "/api/users" → "/api".
+func topPrefix(path string) string {
+	trimmed := strings.TrimPrefix(path, "/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	if parts[0] == "" {
+		return "/"
+	}
+	return "/" + parts[0]
 }
 
 func buildRoutes(clientPort, serverPort int, apiPrefixes, rawRoutes []string) ([]proxy.Route, error) {
