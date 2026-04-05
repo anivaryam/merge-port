@@ -164,7 +164,7 @@ func detachProcess(osArgs []string, logPath string) error {
 	cmd.Stdin = nil
 	cmd.Stdout = lf
 	cmd.Stderr = lf
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setDetachAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		lf.Close()
