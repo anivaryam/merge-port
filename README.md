@@ -127,3 +127,7 @@ Route mode:
 ```
 
 Requests are routed by longest prefix match. WebSocket connections (used by dev server hot-reload) are passed through transparently.
+
+### Health endpoint
+
+merge-port exposes a built-in `/_health` endpoint that returns `200 ok`. This is handled locally by merge-port and never proxied to upstream services — useful for cloud platform liveness probes (Railway, Render, Fly.io).

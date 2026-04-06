@@ -99,6 +99,13 @@ func (p *Proxy) handler() http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_health" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "ok")
+			return
+		}
+
 		for _, route := range p.Routes {
 			if strings.HasPrefix(r.URL.Path, route.Prefix) {
 				rp := reverseProxies[route.Prefix]
