@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -29,17 +28,26 @@ type Proxy struct {
 
 // NewProxy creates a new Proxy. Routes are sorted by prefix length (longest first)
 // so that more specific paths match before less specific ones.
+// Returns an error if any route target URL is invalid.
 // If logger is nil a default stdout logger is used.
-func NewProxy(port int, routes []Route, logger *Logger) *Proxy {
+func NewProxy(port int, routes []Route, logger *Logger) (*Proxy, error) {
 	sorted := make([]Route, len(routes))
 	copy(sorted, routes)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Prefix) > len(sorted[j].Prefix)
 	})
+
+	// Validate all route targets at startup rather than on first request.
+	for _, r := range sorted {
+		if _, err := url.Parse(r.Target); err != nil {
+			return nil, fmt.Errorf("invalid target URL %q for prefix %q: %w", r.Target, r.Prefix, err)
+		}
+	}
+
 	if logger == nil {
 		logger, _ = NewLogger(false, "")
 	}
-	return &Proxy{Port: port, Routes: sorted, Logger: logger}
+	return &Proxy{Port: port, Routes: sorted, Logger: logger}, nil
 }
 
 // Run starts the proxy server and blocks until the context is cancelled.
@@ -48,8 +56,11 @@ func (p *Proxy) Run(ctx context.Context) error {
 	mux.HandleFunc("/", p.handler())
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", p.Port),
-		Handler: mux,
+		Addr:         fmt.Sprintf(":%d", p.Port),
+		Handler:      mux,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -72,10 +83,7 @@ func (p *Proxy) handler() http.HandlerFunc {
 	reverseProxies := make(map[string]*httputil.ReverseProxy)
 
 	for _, r := range p.Routes {
-		target, err := url.Parse(r.Target)
-		if err != nil {
-			log.Fatalf("[proxy] invalid target URL %q: %v", r.Target, err)
-		}
+		target, _ := url.Parse(r.Target) // validated in NewProxy
 
 		rp := httputil.NewSingleHostReverseProxy(target)
 
@@ -107,7 +115,7 @@ func (p *Proxy) handler() http.HandlerFunc {
 		}
 
 		for _, route := range p.Routes {
-			if strings.HasPrefix(r.URL.Path, route.Prefix) {
+			if matchesPrefix(r.URL.Path, route.Prefix) {
 				rp := reverseProxies[route.Prefix]
 				start := time.Now()
 
@@ -127,6 +135,21 @@ func (p *Proxy) handler() http.HandlerFunc {
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprint(w, "merge-port: no matching route")
 	}
+}
+
+// matchesPrefix checks whether path matches the route prefix at a path boundary.
+// This prevents "/api" from matching "/apiv2" or "/api-docs" — only "/api", "/api/",
+// and "/api/anything" are valid matches.
+func matchesPrefix(path, prefix string) bool {
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	// Root prefix always matches.
+	if prefix == "/" {
+		return true
+	}
+	// Exact match or next char is a slash (path boundary).
+	return len(path) == len(prefix) || path[len(prefix)] == '/'
 }
 
 func isWebSocket(r *http.Request) bool {

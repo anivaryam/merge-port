@@ -80,7 +80,10 @@ Route mode (full control):
 			}
 			defer logger.Close()
 
-			p := proxy.NewProxy(listenPort, routes, logger)
+			p, err := proxy.NewProxy(listenPort, routes, logger)
+			if err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
