@@ -58,3 +58,12 @@ fi
 
 chmod +x "${INSTALL_DIR}/merge-port"
 echo "merge-port ${VERSION} installed to ${INSTALL_DIR}/merge-port"
+
+# Windows
+# Install via Go (requires Go 1.22+):
+#   go install github.com/anivaryam/merge-port/cmd/mergeport@latest
+#
+# Or download a release binary from:
+#   https://github.com/anivaryam/merge-port/releases
+#
+# Note: --detach flag is not supported on Windows.

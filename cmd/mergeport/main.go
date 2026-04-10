@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -63,6 +64,9 @@ Route mode (full control):
 			}
 
 			if detach {
+				if runtime.GOOS == "windows" {
+					return fmt.Errorf("--detach is not supported on Windows: background operation is not available")
+				}
 				effectiveLog := logFile
 				if effectiveLog == "" {
 					effectiveLog = fmt.Sprintf("%s/merge-port-%d.log", os.TempDir(), listenPort)

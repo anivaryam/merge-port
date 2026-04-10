@@ -131,3 +131,19 @@ Requests are routed by longest prefix match. WebSocket connections (used by dev 
 ### Health endpoint
 
 merge-port exposes a built-in `/_health` endpoint that returns `200 ok`. This is handled locally by merge-port and never proxied to upstream services — useful for cloud platform liveness probes (Railway, Render, Fly.io).
+
+## Windows
+
+`merge-port` works on Windows with the following limitations:
+
+- **`--detach` is not supported.** Windows does not have a `setsid()` equivalent. The proxy will run in the foreground.
+
+### Install on Windows
+
+```bash
+# Via Go
+go install github.com/anivaryam/merge-port/cmd/mergeport@latest
+
+# Or download a release binary from:
+# https://github.com/anivaryam/merge-port/releases
+```
