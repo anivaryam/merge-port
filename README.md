@@ -6,21 +6,32 @@ A local reverse proxy that merges your client and server into a single port. Run
 
 **Requirements:** Go 1.22 or later
 
-**Quick install** (Linux/macOS):
+**With [brokit](https://github.com/anivaryam/brokit)** (recommended if you use multiple tools from this org — handles install, update, and uninstall):
 
-```bash
+```sh
+brokit install merge-port              # install latest release
+brokit update merge-port               # upgrade to latest
+brokit list                           # see installed tools and versions
+brokit remove merge-port              # uninstall
+```
+
+`brokit` reads the GitHub releases for this repo, verifies sha256, and drops the binary into `/usr/local/bin`.
+
+**From release binary (Linux/macOS, single-tool install):**
+
+```sh
 curl -sSL https://raw.githubusercontent.com/anivaryam/merge-port/main/install.sh | sh
 ```
 
-**Go install**:
+**With Go**:
 
-```bash
+```sh
 go install github.com/anivaryam/merge-port/cmd/mergeport@latest
 ```
 
 **Build from source**:
 
-```bash
+```sh
 make build
 make install  # copies to ~/.local/bin/
 ```
@@ -144,11 +155,16 @@ merge-port exposes a built-in `/_health` endpoint that returns `200 ok`. This is
 
 ### Install on Windows
 
-```bash
-go install github.com/anivaryam/merge-port/cmd/mergeport@latest
-```
+```sh
+# Recommended: brokit
+brokit install merge-port
 
-Or download a release binary from: https://github.com/anivaryam/merge-port/releases
+# Or via Go
+go install github.com/anivaryam/merge-port/cmd/mergeport@latest
+
+# Or download a release binary from:
+# https://github.com/anivaryam/merge-port/releases
+```
 
 ## Environment Variables
 
