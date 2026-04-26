@@ -1,7 +1,10 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/anivaryam/merge-port/internal/proxy"
 )
@@ -258,6 +261,184 @@ func TestBuildRoutes_NeitherMode(t *testing.T) {
 	_, err := buildRoutes(0, 0, nil, nil)
 	if err == nil {
 		t.Fatal("expected error when no flags provided, got nil")
+	}
+}
+
+// ─── discover helpers ─────────────────────────────────────────────────────────
+
+func TestTopPrefix(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/api/users", "/api"},
+		{"/api", "/api"},
+		{"/", "/"},
+		{"api/users", "/api"}, // no leading slash
+		{"/auth/login", "/auth"},
+		{"/v1/users/123", "/v1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := topPrefix(tt.path)
+			if got != tt.want {
+				t.Errorf("topPrefix(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTryOpenAPI_NotOK(t *testing.T) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	prefixes, ok := tryOpenAPI(client, "http://localhost:9999/nonexistent")
+	if ok {
+		t.Errorf("tryOpenAPI should return false for unreachable server")
+	}
+	if prefixes != nil {
+		t.Errorf("tryOpenAPI should return nil prefixes on failure, got %v", prefixes)
+	}
+}
+
+func TestTryOpenAPI_Non200(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	prefixes, ok := tryOpenAPI(client, server.URL+"/openapi.json")
+	if ok {
+		t.Errorf("tryOpenAPI should return false for non-200 status")
+	}
+	if prefixes != nil {
+		t.Errorf("tryOpenAPI should return nil prefixes on failure, got %v", prefixes)
+	}
+}
+
+func TestTryOpenAPI_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	prefixes, ok := tryOpenAPI(client, server.URL+"/openapi.json")
+	if ok {
+		t.Errorf("tryOpenAPI should return false for invalid JSON")
+	}
+	if prefixes != nil {
+		t.Errorf("tryOpenAPI should return nil prefixes on failure, got %v", prefixes)
+	}
+}
+
+func TestTryOpenAPI_EmptyPaths(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"paths": {}}`))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	prefixes, ok := tryOpenAPI(client, server.URL+"/openapi.json")
+	if ok {
+		t.Errorf("tryOpenAPI should return false for empty paths")
+	}
+	if prefixes != nil {
+		t.Errorf("tryOpenAPI should return nil prefixes on failure, got %v", prefixes)
+	}
+}
+
+func TestTryOpenAPI_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"paths": {
+				"/api/users": {"get": {}},
+				"/api/posts": {"post": {}},
+				"/auth/login": {"post": {}}
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	prefixes, ok := tryOpenAPI(client, server.URL+"/openapi.json")
+	if !ok {
+		t.Fatalf("tryOpenAPI should return true for valid OpenAPI spec")
+	}
+	if len(prefixes) != 2 {
+		t.Errorf("expected 2 prefixes, got %d: %v", len(prefixes), prefixes)
+	}
+	if prefixes[0] != "/api" || prefixes[1] != "/auth" {
+		t.Errorf("prefixes = %v, want [/api, /auth]", prefixes)
+	}
+}
+
+func TestDiscoverPrefixes_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/openapi.json" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"paths": {"/api/users": {}, "/api/posts": {}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	prefixes, source, err := discoverPrefixes(server.URL)
+	if err != nil {
+		t.Fatalf("discoverPrefixes failed: %v", err)
+	}
+	if source != "/openapi.json" {
+		t.Errorf("source = %q, want /openapi.json", source)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "/api" {
+		t.Errorf("prefixes = %v, want [/api]", prefixes)
+	}
+}
+
+func TestDiscoverPrefixes_FallbackToSwagger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/openapi.json":
+			w.WriteHeader(http.StatusNotFound)
+		case "/swagger.json":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"paths": {"/auth/token": {}}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	prefixes, source, err := discoverPrefixes(server.URL)
+	if err != nil {
+		t.Fatalf("discoverPrefixes failed: %v", err)
+	}
+	if source != "/swagger.json" {
+		t.Errorf("source = %q, want /swagger.json", source)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "/auth" {
+		t.Errorf("prefixes = %v, want [/auth]", prefixes)
+	}
+}
+
+func TestDiscoverPrefixes_AllEndpointsFail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	_, _, err := discoverPrefixes(server.URL)
+	if err == nil {
+		t.Fatal("discoverPrefixes should return error when all endpoints fail")
+	}
+}
+
+func TestDiscoverPrefixes_ServerUnreachable(t *testing.T) {
+	_, _, err := discoverPrefixes("http://localhost:99999")
+	if err == nil {
+		t.Fatal("discoverPrefixes should return error for unreachable server")
 	}
 }
 

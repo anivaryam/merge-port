@@ -21,9 +21,10 @@ type Route struct {
 
 // Proxy is a reverse proxy that routes requests by path prefix.
 type Proxy struct {
-	Port   int
-	Routes []Route
-	Logger *Logger
+	Port            int
+	Routes          []Route
+	Logger          *Logger
+	reverseProxies  map[string]*httputil.ReverseProxy
 }
 
 // NewProxy creates a new Proxy. Routes are sorted by prefix length (longest first)
@@ -37,7 +38,6 @@ func NewProxy(port int, routes []Route, logger *Logger) (*Proxy, error) {
 		return len(sorted[i].Prefix) > len(sorted[j].Prefix)
 	})
 
-	// Validate all route targets at startup rather than on first request.
 	for _, r := range sorted {
 		if _, err := url.Parse(r.Target); err != nil {
 			return nil, fmt.Errorf("invalid target URL %q for prefix %q: %w", r.Target, r.Prefix, err)
@@ -45,9 +45,43 @@ func NewProxy(port int, routes []Route, logger *Logger) (*Proxy, error) {
 	}
 
 	if logger == nil {
-		logger, _ = NewLogger(false, "")
+		var err error
+		logger, err = NewLogger(false, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create default logger: %w", err)
+		}
 	}
-	return &Proxy{Port: port, Routes: sorted, Logger: logger}, nil
+
+	p := &Proxy{Port: port, Routes: sorted, Logger: logger}
+	p.reverseProxies = p.buildReverseProxies()
+	return p, nil
+}
+
+func (p *Proxy) buildReverseProxies() map[string]*httputil.ReverseProxy {
+	result := make(map[string]*httputil.ReverseProxy)
+	for _, r := range p.Routes {
+		target, _ := url.Parse(r.Target)
+		rp := httputil.NewSingleHostReverseProxy(target)
+
+		originalDirector := rp.Director
+		rp.Director = func(req *http.Request) {
+			originalDirector(req)
+			req.Host = target.Host
+			req.Header.Del("Origin")
+			req.Header.Del("Referer")
+		}
+
+		logger := p.Logger
+		routeTarget := r.Target
+		rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+			logger.Error(req.Method, req.URL.Path, routeTarget, err)
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, "merge-port: upstream unreachable: %v", err)
+		}
+
+		result[r.Prefix] = rp
+	}
+	return result
 }
 
 // Run starts the proxy server and blocks until the context is cancelled.
@@ -80,32 +114,6 @@ func (p *Proxy) Run(ctx context.Context) error {
 }
 
 func (p *Proxy) handler() http.HandlerFunc {
-	reverseProxies := make(map[string]*httputil.ReverseProxy)
-
-	for _, r := range p.Routes {
-		target, _ := url.Parse(r.Target) // validated in NewProxy
-
-		rp := httputil.NewSingleHostReverseProxy(target)
-
-		originalDirector := rp.Director
-		rp.Director = func(req *http.Request) {
-			originalDirector(req)
-			req.Host = target.Host
-			req.Header.Del("Origin")
-			req.Header.Del("Referer")
-		}
-
-		logger := p.Logger
-		routeTarget := r.Target
-		rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
-			logger.Error(req.Method, req.URL.Path, routeTarget, err)
-			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, "merge-port: upstream %s unreachable: %v", routeTarget, err)
-		}
-
-		reverseProxies[r.Prefix] = rp
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_health" {
 			w.Header().Set("Content-Type", "text/plain")
@@ -116,7 +124,7 @@ func (p *Proxy) handler() http.HandlerFunc {
 
 		for _, route := range p.Routes {
 			if matchesPrefix(r.URL.Path, route.Prefix) {
-				rp := reverseProxies[route.Prefix]
+				rp := p.reverseProxies[route.Prefix]
 				start := time.Now()
 
 				if isWebSocket(r) {
@@ -156,13 +164,15 @@ func isWebSocket(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
-// statusRecorder wraps http.ResponseWriter to capture the status code.
+// statusRecorder wraps http.ResponseWriter to capture the status code
+// written, enabling logging of the actual response status.
 type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
 }
 
+// WriteHeader captures the status code and delegates to the underlying ResponseWriter.
 func (r *statusRecorder) WriteHeader(code int) {
 	if !r.wroteHeader {
 		r.status = code
@@ -171,12 +181,14 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Flush delegates to the underlying ResponseWriter if it supports flushing.
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
+// Hijack delegates to the underlying ResponseWriter if it supports hijacking.
 func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
 		return h.Hijack()

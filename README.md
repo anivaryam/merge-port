@@ -4,6 +4,8 @@ A local reverse proxy that merges your client and server into a single port. Run
 
 ## Install
 
+**Requirements:** Go 1.22 or later
+
 **Quick install** (Linux/macOS):
 
 ```bash
@@ -71,6 +73,8 @@ Route mode cannot be combined with `--client`, `--server`, or `--api-prefix`.
 | `--silent` | | Suppress all proxy log output |
 | `--log-file` | | Write proxy logs to a file instead of stdout |
 | `--detach` | | Run in the background (implies `--silent`); logs go to the file set by `--log-file` |
+| `--version` | | Print version and exit |
+| `--help` | | Show help and exit |
 
 ### discover subcommand
 
@@ -141,9 +145,51 @@ merge-port exposes a built-in `/_health` endpoint that returns `200 ok`. This is
 ### Install on Windows
 
 ```bash
-# Via Go
 go install github.com/anivaryam/merge-port/cmd/mergeport@latest
-
-# Or download a release binary from:
-# https://github.com/anivaryam/merge-port/releases
 ```
+
+Or download a release binary from: https://github.com/anivaryam/merge-port/releases
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `NO_COLOR` | Set to any value to disable ANSI color codes in output |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (invalid flags, port in use, upstream unreachable) |
+
+## Troubleshooting
+
+**Port already in use:**
+```
+merge-port: listen tcp :8080: bind: address already in use
+```
+Solution: Use `--port` to specify a different port.
+
+**Upstream server not running:**
+```
+merge-port: upstream unreachable: dial tcp localhost:3001: connection refused
+```
+Solution: Ensure your client/server are running before starting merge-port.
+
+**Detach on Windows:**
+The `--detach` flag is not supported on Windows. The proxy will run in the foreground.
+
+## Contributing
+
+Contributions welcome! Please open an issue first for significant changes.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing`)
+3. Commit your changes (`git commit -am 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing`)
+5. Open a Pull Request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
