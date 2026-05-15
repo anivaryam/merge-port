@@ -21,7 +21,7 @@ jobs:
       - name: ShellCheck installer
         uses: docker://koalaman/shellcheck-alpine:v0.10.0
         with:
-          args: -s sh install.sh
+          args: shellcheck -s sh install.sh
 
   lint:
     runs-on: ubuntu-latest
