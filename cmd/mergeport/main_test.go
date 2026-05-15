@@ -835,21 +835,22 @@ func writeStateForTest(t *testing.T, port int, state lifecycle.State) {
 func TestDetachPIDZeroStartingStateDoesNotReportAlreadyRunningWhenPortUnavailable(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
-	ln := listenForTest(t)
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
 	port := portOf(t, ln)
 
 	writeStateForTest(t, port, lifecycle.State{PID: 0, Port: port, Status: lifecycle.StatusStarting, StartedAt: time.Now()})
 
-	_, _, err := executeCommand("--client", "5173", "--server", "3001", "--port", fmt.Sprint(port), "--detach")
+	_, _, err = executeCommand("--client", "5173", "--server", "3001", "--port", fmt.Sprint(port), "--detach")
 	if err == nil {
-		ln.Close()
 		t.Fatal("runDetach succeeded but port is occupied - child may be running")
 	}
 	if strings.Contains(err.Error(), "already running") {
-		ln.Close()
 		t.Fatalf("runDetach incorrectly treated PID 0 state as running process:\n%v", err)
 	}
-	ln.Close()
 }
 
 func TestDetachPIDZeroStateIsRemovedBeforeFailedChildStart(t *testing.T) {

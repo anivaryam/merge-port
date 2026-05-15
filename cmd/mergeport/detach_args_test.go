@@ -20,6 +20,8 @@ func TestRewriteDetachArgsAbsolutizesExplicitRelativeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"--config", filepath.Join(dir, "dev.yaml"), "--silent", "--log-file", "new.log"}
+	got = normalizeConfigArgsForCompare(t, got)
+	want = normalizeConfigArgsForCompare(t, want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
@@ -41,9 +43,32 @@ func TestRewriteDetachArgsInjectsImplicitCWDConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"--client", "3000", "--config", filepath.Join(dir, ".merge-port.yaml"), "--silent", "--log-file", "new.log"}
+	got = normalizeConfigArgsForCompare(t, got)
+	want = normalizeConfigArgsForCompare(t, want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}
+}
+
+func normalizeConfigArgsForCompare(t *testing.T, args []string) []string {
+	t.Helper()
+	out := append([]string(nil), args...)
+	for i := 1; i < len(out); i++ {
+		if out[i-1] == "--config" {
+			out[i] = normalizePathForCompare(t, out[i])
+		}
+	}
+	return out
+}
+
+func normalizePathForCompare(t *testing.T, path string) string {
+	t.Helper()
+	dir, file := filepath.Split(path)
+	evaluatedDir, err := filepath.EvalSymlinks(filepath.Clean(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(evaluatedDir, file)
 }
 
 func TestRewriteDetachArgsDoesNotInjectMissingImplicitConfig(t *testing.T) {

@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -505,7 +504,7 @@ func newStatusCommand() *cobra.Command {
 			return err
 		}
 		if state.PID <= 0 {
-			lifecycle.Remove(path)
+			_ = lifecycle.Remove(path)
 			fmt.Fprintf(cmd.OutOrStdout(), "merge-port is not running; removed stale state for port %d\n", port)
 			return nil
 		}
@@ -514,7 +513,7 @@ func newStatusCommand() *cobra.Command {
 			return err
 		}
 		if lifecycle.IsStartingStale(state, time.Now()) || !exists {
-			lifecycle.Remove(path)
+			_ = lifecycle.Remove(path)
 			fmt.Fprintf(cmd.OutOrStdout(), "merge-port is not running; removed stale state for port %d\n", port)
 			return nil
 		}
@@ -543,7 +542,7 @@ func newStopCommand() *cobra.Command {
 			return err
 		}
 		if state.PID <= 0 {
-			lifecycle.Remove(path)
+			_ = lifecycle.Remove(path)
 			fmt.Fprintf(cmd.OutOrStdout(), "merge-port is not running; removed stale state for port %d\n", port)
 			return nil
 		}
@@ -555,14 +554,14 @@ func newStopCommand() *cobra.Command {
 			return err
 		}
 		if !exists {
-			lifecycle.Remove(path)
+			_ = lifecycle.Remove(path)
 			fmt.Fprintf(cmd.OutOrStdout(), "merge-port is not running; removed stale state for port %d\n", port)
 			return nil
 		}
 		if err := terminateProcess(state.PID, force); err != nil {
 			return err
 		}
-		lifecycle.Remove(path)
+		_ = lifecycle.Remove(path)
 		fmt.Fprintf(cmd.OutOrStdout(), "Stopped merge-port on port %d (PID %d)\n", port, state.PID)
 		return nil
 	}}
@@ -589,13 +588,13 @@ func runDetach(cmd *cobra.Command, port int, logFile string) error {
 	statePath := lifecycle.StatePath(defaultStateDir(), port)
 	if state, err := lifecycle.Read(statePath); err == nil {
 		if state.PID <= 0 {
-			lifecycle.Remove(statePath)
+			_ = lifecycle.Remove(statePath)
 		} else {
 			exists, _, _ := processExists(state.PID)
 			if exists {
 				return fmt.Errorf("merge-port already running on port %d. Stop it with: merge-port stop --port %d", port, port)
 			}
-			lifecycle.Remove(statePath)
+			_ = lifecycle.Remove(statePath)
 		}
 	}
 	reserve := lifecycle.State{Port: port, LogFile: effectiveLog, StartedAt: time.Now(), Status: lifecycle.StatusStarting}
@@ -604,7 +603,7 @@ func runDetach(cmd *cobra.Command, port int, logFile string) error {
 	}
 	pid, err := detachProcess(os.Args[1:], effectiveLog)
 	if err != nil {
-		lifecycle.Remove(statePath)
+		_ = lifecycle.Remove(statePath)
 		return err
 	}
 	state := lifecycle.State{PID: pid, Port: port, LogFile: effectiveLog, Args: os.Args[1:], StartedAt: time.Now(), Status: lifecycle.StatusRunning}
@@ -785,18 +784,6 @@ func parseRouteFlags(rawRoutes []string) ([]proxy.Route, error) {
 
 func normalizeTarget(target string) string { return config.NormalizeTarget(target) }
 
-func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 func discoverPrefixes(base string) ([]string, string, error) {
 	result, err := discover.Discover(context.Background(), discover.Options{BaseURL: base, Timeout: 5 * time.Second})
 	return result.Prefixes, strings.TrimPrefix(result.Source, base), err
@@ -845,10 +832,4 @@ func emitNoCatchAllWarning(w io.Writer, routes []proxy.Route) {
 	}
 	fmt.Fprintln(w, "Warning: no catch-all / route configured; unmatched paths will return 404.")
 	fmt.Fprintln(w, "Add --route /=3000 if you want frontend fallback routing.")
-}
-
-func sortedRoutes(routes []proxy.Route) []proxy.Route {
-	out := append([]proxy.Route(nil), routes...)
-	sort.Slice(out, func(i, j int) bool { return len(out[i].Prefix) > len(out[j].Prefix) })
-	return out
 }
