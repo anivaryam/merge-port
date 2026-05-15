@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -38,6 +39,9 @@ func TestReserveIsExclusiveAndStateRoundTrips(t *testing.T) {
 }
 
 func TestReserveCreatesPrivateStateDirAndFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits are not enforced on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "state", "port-8080.json")
 	state := State{PID: 123, Port: 8080, LogFile: "/tmp/mp.log", Status: StatusStarting, StartedAt: time.Now()}
 	if err := Reserve(path, state); err != nil {
@@ -48,6 +52,9 @@ func TestReserveCreatesPrivateStateDirAndFile(t *testing.T) {
 }
 
 func TestWriteAtomicCreatesPrivateStateDirAndFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits are not enforced on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "state", "port-8080.json")
 	state := State{PID: 123, Port: 8080, LogFile: "/tmp/mp.log", Status: StatusRunning, StartedAt: time.Now()}
 	if err := WriteAtomic(path, state); err != nil {

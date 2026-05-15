@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -266,6 +267,9 @@ func TestNewProxy_InvalidTarget(t *testing.T) {
 }
 
 func TestNewLoggerCreatesPrivateLogFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits are not enforced on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "merge-port.log")
 	logger, err := NewLogger(false, path)
 	if err != nil {

@@ -108,6 +108,9 @@ func TestDryRunUsesDefaultPortWhenAbsent(t *testing.T) {
 }
 
 func TestDetachPortZeroReturnsUsageError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("detach is unsupported on Windows")
+	}
 	_, _, err := executeCommand("--client", "5173", "--server", "3001", "--port", "0", "--detach")
 	if err == nil {
 		t.Fatal("expected --port 0 --detach error")
@@ -287,6 +290,9 @@ func TestDiscoverJSONCannotBeUsedWithWriteConfig(t *testing.T) {
 }
 
 func TestStopMissingStatePrintsFriendlyNotRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stop is unsupported on Windows")
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	port := freePortForTest(t)
 	out, _, err := executeCommand("stop", "--port", fmt.Sprint(port))
@@ -303,6 +309,9 @@ func TestStopMissingStatePrintsFriendlyNotRunning(t *testing.T) {
 }
 
 func TestStatusPIDZeroStartingStateIsNotRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("status is unsupported on Windows")
+	}
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	port := freePortForTest(t)
@@ -321,6 +330,9 @@ func TestStatusPIDZeroStartingStateIsNotRunning(t *testing.T) {
 }
 
 func TestStopPIDZeroStartingStateIsNotRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stop is unsupported on Windows")
+	}
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	port := freePortForTest(t)
